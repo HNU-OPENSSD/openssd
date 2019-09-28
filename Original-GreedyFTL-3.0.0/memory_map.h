@@ -101,7 +101,21 @@
 #define RETRY_LIMIT_TABLE_ADDR				(DIE_STATE_TABLE_ADDR + sizeof(DIE_STATE_TABLE))
 #define WAY_PRIORITY_TABLE_ADDR 			(RETRY_LIMIT_TABLE_ADDR + sizeof(RETRY_LIMIT_TABLE))
 
-#define FTL_MANAGEMENT_END_ADDR				((WAY_PRIORITY_TABLE_ADDR + sizeof(WAY_PRIORITY_TABLE))- 1)
+//for in_nvm_flag map tables  add by yanjie.tan
+#define IN_NVM_FLAG_MAP_ADDR 				(WAY_PRIORITY_TABLE_ADDR + sizeof(WAY_PRIORITY_TABLE))
+// for inprocess_table map tables add by yanjie.tan 2019.3.25
+#define INPROCESS_TABLE_MAP_ADDR			(IN_NVM_FLAG_MAP_ADDR + sizeof(IN_NVM_FLAG_MAP))
+
+//for commit request pool  add by yanjie.tan 2019.3.31
+//#define COMMIT_REQ_POOL_ADDR 				(INPROCESS_TABLE_MAP_ADDR + sizeof(INPORCESS_TABLE_MAP))
+
+// for log list map
+#define LOG_LIST_MAP_ADDR 			(INPROCESS_TABLE_MAP_ADDR + sizeof(INPORCESS_TABLE_MAP))
+
+
+#define FTL_MANAGEMENT_END_ADDR				((LOG_LIST_MAP_ADDR + sizeof(LOG_LIST_MAP))- 1)
+
+//#define FTL_MANAGEMENT_END_ADDR				((WAY_PRIORITY_TABLE_ADDR + sizeof(WAY_PRIORITY_TABLE))- 1)
 
 #define RESERVED1_START_ADDR				(FTL_MANAGEMENT_END_ADDR + 1)
 #define RESERVED1_END_ADDR					0x3FFFFFFF

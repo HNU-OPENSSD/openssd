@@ -43,12 +43,25 @@
 //   - First draft
 //////////////////////////////////////////////////////////////////////////////////
 
-
 #ifndef ADDRESS_TRANSLATION_H_
 #define ADDRESS_TRANSLATION_H_
 
 #include "ftl_config.h"
 #include "nvme/nvme.h"
+#include "wal/wal_ssd.h"
+
+#define DataReadFromNandFUN 	0
+#define EraseBlockFUN 	1
+#define EraseTotalBlockSpaceFUN 2
+#define EraseUserBlockSpaceFUN 3
+#define EvictDataBufEntryFUN 4
+#define FindBadBlockFUN 5
+#define GarbageCollectionFUN 6
+#define InitNandArrayFUN 7
+#define ReadBadBlockTableFUN 8
+#define ReqTransSliceToLowLevelFUN 9
+#define SaveBadBlockTableFUN 10
+#define write_log_to_ssdFUN 11
 
 #define LSA_NONE	0xffffffff
 #define LSA_FAIL	0xffffffff
@@ -111,30 +124,42 @@
 //for logical to virtual translation
 typedef struct _LOGICAL_SLICE_ENTRY {
 	unsigned int virtualSliceAddr;
+	//暂时注释掉，因为只需要在其中一个结构体中有标识应该就够了
+	//unsigned char is_nvm_mapping;
 } LOGICAL_SLICE_ENTRY, *P_LOGICAL_SLICE_ENTRY;
 
 typedef struct _LOGICAL_SLICE_MAP {
 	LOGICAL_SLICE_ENTRY logicalSlice[SLICES_PER_SSD];
 } LOGICAL_SLICE_MAP, *P_LOGICAL_SLICE_MAP;
 
-
 //for virtual to logical  translation
 typedef struct _VIRTUAL_SLICE_ENTRY {
 	unsigned int logicalSliceAddr;
+
 } VIRTUAL_SLICE_ENTRY, *P_VIRTUAL_SLICE_ENTRY;
 
 typedef struct _VIRTUAL_SLICE_MAP {
 	VIRTUAL_SLICE_ENTRY virtualSlice[SLICES_PER_SSD];
 } VIRTUAL_SLICE_MAP, *P_VIRTUAL_SLICE_MAP;
 
+//add by yanjie.tan
+typedef struct _IN_NVM_FLAG {
+	//是否在NVM MAPPING中的flag
+	unsigned char in_nvm_flag;
+} IN_NVM_FLAG, *P_IN_NVM_FLAG;
+
+typedef struct _IN_NVM_FLAG_MAP {
+	IN_NVM_FLAG inNvmFlag[SLICES_PER_SSD];
+} IN_NVM_FLAG_MAP, *P_IN_NVM_FLAG_MAP;
+
 typedef struct _VIRTUAL_BLOCK_ENTRY {
-	unsigned int bad : 1;
-	unsigned int free : 1;
-	unsigned int invalidSliceCnt : 16;
+	unsigned int bad :1;
+	unsigned int free :1;
+	unsigned int invalidSliceCnt :16;
 	unsigned int reserved0 :10;
-	unsigned int currentPage : 16;
-	unsigned int eraseCnt : 16;
-	unsigned int prevBlock : 16;
+	unsigned int currentPage :16;
+	unsigned int eraseCnt :16;
+	unsigned int prevBlock :16;
 	unsigned int nextBlock :16;
 } VIRTUAL_BLOCK_ENTRY, *P_VIRTUAL_BLOCK_ENTRY;
 
@@ -142,39 +167,38 @@ typedef struct _VIRTUAL_BLOCK_MAP {
 	VIRTUAL_BLOCK_ENTRY block[USER_DIES][USER_BLOCKS_PER_DIE];
 } VIRTUAL_BLOCK_MAP, *P_VIRTUAL_BLOCK_MAP;
 
-
 typedef struct _VIRTUAL_DIE_ENTRY {
-	unsigned int currentBlock : 16;
-	unsigned int headFreeBlock : 16;
-	unsigned int tailFreeBlock : 16;
-	unsigned int freeBlockCnt : 16;
-	unsigned int prevDie : 8;
-	unsigned int nextDie : 8;
-	unsigned int reserved0 : 16;
+	unsigned int currentBlock :16;
+	unsigned int headFreeBlock :16;
+	unsigned int tailFreeBlock :16;
+	unsigned int freeBlockCnt :16;
+	unsigned int prevDie :8;
+	unsigned int nextDie :8;
+	unsigned int reserved0 :16;
 } VIRTUAL_DIE_ENTRY, *P_VIRTUAL_DIE_ENTRY;
 
 typedef struct _VIRTUAL_DIE_MAP {
 	VIRTUAL_DIE_ENTRY die[USER_DIES];
 } VIRTUAL_DIE_MAP, *P_VIRTUAL_DIE_MAP;
 
-typedef struct _FRRE_BLOCK_ALLOCATION_LIST {	//free block allocation die sequence list
-	unsigned int headDie : 8;
-	unsigned int tailDie : 8;
-	unsigned int reserved0 : 16;
+typedef struct _FRRE_BLOCK_ALLOCATION_LIST { //free block allocation die sequence list
+	unsigned int headDie :8;
+	unsigned int tailDie :8;
+	unsigned int reserved0 :16;
 } FRRE_BLOCK_ALLOCATION_LIST, *P_FRRE_BLOCK_ALLOCATION_LIST;
 
-typedef struct _BAD_BLOCK_TABLE_INFO_ENTRY{
-	unsigned int phyBlock : 16;
-	unsigned int grownBadUpdate : 1;
-	unsigned int reserved0 : 15;
+typedef struct _BAD_BLOCK_TABLE_INFO_ENTRY {
+	unsigned int phyBlock :16;
+	unsigned int grownBadUpdate :1;
+	unsigned int reserved0 :15;
 } BAD_BLOCK_TABLE_INFO_ENTRY, *P_BAD_BLOCK_TABLE_ENTRY;
 
-typedef struct _BAD_BLOCK_TABLE_INFO_MAP{
+typedef struct _BAD_BLOCK_TABLE_INFO_MAP {
 	BAD_BLOCK_TABLE_INFO_ENTRY bbtInfo[USER_DIES];
 } BAD_BLOCK_TABLE_INFO_MAP, *P_BAD_BLOCK_TABLE_INFO_MAP;
 
 typedef struct _PHY_BLOCK_ENTRY {
-	unsigned int remappedPhyBlock : 16;
+	unsigned int remappedPhyBlock :16;
 	unsigned int bad :1;
 	unsigned int reserved0 :15;
 } PHY_BLOCK_ENTRY, *P_PHY_BLOCK_ENTRY;
@@ -183,15 +207,16 @@ typedef struct _PHY_BLOCK_MAP {
 	PHY_BLOCK_ENTRY phyBlock[USER_DIES][TOTAL_BLOCKS_PER_DIE];
 } PHY_BLOCK_MAP, *P_PHY_BLOCK_MAP;
 
-
 void InitAddressMap();
 void InitSliceMap();
 void InitBlockDieMap();
 
 unsigned int AddrTransRead(unsigned int logicalSliceAddr);
 unsigned int AddrTransWrite(unsigned int logicalSliceAddr);
+void add_to_mpi(unsigned lpn);
 unsigned int FindFreeVirtualSlice();
-unsigned int FindFreeVirtualSliceForGc(unsigned int copyTargetDieNo, unsigned int victimBlockNo);
+unsigned int FindFreeVirtualSliceForGc(unsigned int copyTargetDieNo,
+		unsigned int victimBlockNo);
 unsigned int FindDieForFreeSliceAllocation();
 
 void InvalidateOldVsa(unsigned int logicalSliceAddr);
@@ -200,12 +225,15 @@ void EraseBlock(unsigned int dieNo, unsigned int blockNo);
 void PutToFbList(unsigned int dieNo, unsigned int blockNo);
 unsigned int GetFromFbList(unsigned int dieNo, unsigned int getFreeBlockOption);
 
-void UpdatePhyBlockMapForGrownBadBlock(unsigned int dieNo, unsigned int phyBlockNo);
+void UpdatePhyBlockMapForGrownBadBlock(unsigned int dieNo,
+		unsigned int phyBlockNo);
 void UpdateBadBlockTableForGrownBadBlock(unsigned int tempBufAddr);
-
 
 extern P_LOGICAL_SLICE_MAP logicalSliceMapPtr;
 extern P_VIRTUAL_SLICE_MAP virtualSliceMapPtr;
+//add by yanjie.tan
+extern P_IN_NVM_FLAG_MAP inNvmFlagMapPtr;
+
 extern P_VIRTUAL_BLOCK_MAP virtualBlockMapPtr;
 extern P_VIRTUAL_DIE_MAP virtualDieMapPtr;
 extern P_PHY_BLOCK_MAP phyBlockMapPtr;

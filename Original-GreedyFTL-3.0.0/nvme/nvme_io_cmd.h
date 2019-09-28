@@ -48,5 +48,6 @@
 #define __NVME_IO_CMD_H_
 
 void handle_nvme_io_cmd(NVME_COMMAND *nvmeCmd);
+void handle_nvme_io_cmd_nvctc(NVME_COMMAND *nvmeCmd, unsigned int *commitCnt);
 
 #endif	//__NVME_IO_CMD_H_

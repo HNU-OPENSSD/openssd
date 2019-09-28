@@ -70,8 +70,7 @@
 
 volatile NVME_CONTEXT g_nvmeTask;
 
-void nvme_main()
-{
+void nvme_main() {
 	unsigned int exeLlr;
 
 	xil_printf("!!! Wait until FTL reset complete !!! \r\n");
@@ -81,54 +80,43 @@ void nvme_main()
 	xil_printf("\r\nFTL reset complete!!! \r\n");
 	xil_printf("Turn on the host PC \r\n");
 
-	while(1)
-	{
+	while (1) {
 		exeLlr = 1;
 
-		if(g_nvmeTask.status == NVME_TASK_WAIT_CC_EN)
-		{
+		if (g_nvmeTask.status == NVME_TASK_WAIT_CC_EN) {
 			unsigned int ccEn;
 			ccEn = check_nvme_cc_en();
-			if(ccEn == 1)
-			{
+			if (ccEn == 1) {
 				set_nvme_admin_queue(1, 1, 1);
 				set_nvme_csts_rdy(1);
 				g_nvmeTask.status = NVME_TASK_RUNNING;
 				xil_printf("\r\nNVMe ready!!!\r\n");
 			}
-		}
-		else if(g_nvmeTask.status == NVME_TASK_RUNNING)
-		{
+		} else if (g_nvmeTask.status == NVME_TASK_RUNNING) {
 			NVME_COMMAND nvmeCmd;
 			unsigned int cmdValid;
 
-			cmdValid = get_nvme_cmd(&nvmeCmd.qID, &nvmeCmd.cmdSlotTag, &nvmeCmd.cmdSeqNum, nvmeCmd.cmdDword);
+			cmdValid = get_nvme_cmd(&nvmeCmd.qID, &nvmeCmd.cmdSlotTag,
+					&nvmeCmd.cmdSeqNum, nvmeCmd.cmdDword);
 
-			if(cmdValid == 1)
-			{
-				if(nvmeCmd.qID == 0)
-				{
+			if (cmdValid == 1) {
+				if (nvmeCmd.qID == 0) {
 					handle_nvme_admin_cmd(&nvmeCmd);
-				}
-				else
-				{
+				} else {
 					handle_nvme_io_cmd(&nvmeCmd);
+					//handle_nvme_io_cmd_nvctc(&nvmeCmd, &commitCnt);
 					ReqTransSliceToLowLevel();
-					exeLlr=0;
+					exeLlr = 0;
 				}
 			}
-		}
-		else if(g_nvmeTask.status == NVME_TASK_SHUTDOWN)
-		{
+		} else if (g_nvmeTask.status == NVME_TASK_SHUTDOWN) {
 			NVME_STATUS_REG nvmeReg;
 			nvmeReg.dword = IO_READ32(NVME_STATUS_REG_ADDR);
-			if(nvmeReg.ccShn != 0)
-			{
+			if (nvmeReg.ccShn != 0) {
 				unsigned int qID;
 				set_nvme_csts_shst(1);
 
-				for(qID = 0; qID < 8; qID++)
-				{
+				for (qID = 0; qID < 8; qID++) {
 					set_io_cq(qID, 0, 0, 0, 0, 0, 0);
 					set_io_sq(qID, 0, 0, 0, 0, 0);
 				}
@@ -139,29 +127,23 @@ void nvme_main()
 				g_nvmeTask.status = NVME_TASK_WAIT_RESET;
 
 				//flush grown bad block info
-				UpdateBadBlockTableForGrownBadBlock(RESERVED_DATA_BUFFER_BASE_ADDR);
+				UpdateBadBlockTableForGrownBadBlock (RESERVED_DATA_BUFFER_BASE_ADDR);
 
 				xil_printf("\r\nNVMe shutdown!!!\r\n");
 			}
-		}
-		else if(g_nvmeTask.status == NVME_TASK_WAIT_RESET)
-		{
+		} else if (g_nvmeTask.status == NVME_TASK_WAIT_RESET) {
 			unsigned int ccEn;
 			ccEn = check_nvme_cc_en();
-			if(ccEn == 0)
-			{
+			if (ccEn == 0) {
 				g_nvmeTask.cacheEn = 0;
 				set_nvme_csts_shst(0);
 				set_nvme_csts_rdy(0);
 				g_nvmeTask.status = NVME_TASK_IDLE;
 				xil_printf("\r\nNVMe disable!!!\r\n");
 			}
-		}
-		else if(g_nvmeTask.status == NVME_TASK_RESET)
-		{
+		} else if (g_nvmeTask.status == NVME_TASK_RESET) {
 			unsigned int qID;
-			for(qID = 0; qID < 8; qID++)
-			{
+			for (qID = 0; qID < 8; qID++) {
 				set_io_cq(qID, 0, 0, 0, 0, 0, 0);
 				set_io_sq(qID, 0, 0, 0, 0, 0);
 			}
@@ -174,12 +156,12 @@ void nvme_main()
 			xil_printf("\r\nNVMe reset!!!\r\n");
 		}
 
-		if(exeLlr && ((nvmeDmaReqQ.headReq != REQ_SLOT_TAG_NONE) || notCompletedNandReqCnt || blockedReqCnt))
-		{
+		if (exeLlr
+				&& ((nvmeDmaReqQ.headReq != REQ_SLOT_TAG_NONE)
+						|| notCompletedNandReqCnt || blockedReqCnt)) {
 			CheckDoneNvmeDmaReq();
 			SchedulingNandReq();
 		}
 	}
 }
-
 

@@ -85,6 +85,10 @@
 #define IO_NVM_WRITE_UNCORRECTABLE							0x04
 #define IO_NVM_COMPARE										0x05
 #define IO_NVM_DATASET_MANAGEMENT							0x09
+// add by yanjie.tan 2019.01.29
+#define IO_NVM_COMMIT 										0x03
+// add by yanjie.tan 2019.04.27
+#define IO_NVM_ABORT										0x41
 
 /*Status Code Type */
 #define SCT_GENERIC_COMMAND_STATUS							0

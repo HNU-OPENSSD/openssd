@@ -77,15 +77,18 @@ typedef struct _ROW_ADDR_DEPENDENCY_TABLE {
 } ROW_ADDR_DEPENDENCY_TABLE, *P_ROW_ADDR_DEPENDENCY_TABLE;
 
 void InitDependencyTable();
-void ReqTransNvmeToSlice(unsigned int cmdSlotTag, unsigned int startLba, unsigned int nlb, unsigned int cmdCode);
+void ReqTransNvmeToSlice(unsigned int cmdSlotTag, unsigned int startLba, unsigned int nlb, unsigned int cmdCode, unsigned int txId);
 void ReqTransSliceToLowLevel();
 void IssueNvmeDmaReq(unsigned int reqSlotTag);
 void CheckDoneNvmeDmaReq();
 
-void SelectLowLevelReqQ(unsigned int reqSlotTag);
+void SelectLowLevelReqQ(unsigned int reqSlotTag, unsigned int fun);
 void ReleaseBlockedByBufDepReq(unsigned int reqSlotTag);
 void ReleaseBlockedByRowAddrDepReq(unsigned int chNo, unsigned int wayNo);
 
-extern P_ROW_ADDR_DEPENDENCY_TABLE rowAddrDependencyTablePtr;
+unsigned int CheckBufDep(unsigned int reqSlotTag);
 
+extern P_ROW_ADDR_DEPENDENCY_TABLE rowAddrDependencyTablePtr;
+extern unsigned long pages_written_to_flash_rxdma;
+extern unsigned long pages_written_to_flash_nand;
 #endif /* REQUEST_TRANSFORM_H_ */
