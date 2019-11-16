@@ -58,16 +58,17 @@ void InitDataBuf()
 {
 	int bufEntry;
 
-	dataBufMapPtr = (P_DATA_BUF_MAP) DATA_BUFFER_MAP_ADDR;
-	dataBufHashTablePtr = (P_DATA_BUF_HASH_TABLE)DATA_BUFFFER_HASH_TABLE_ADDR;
-	tempDataBufMapPtr = (P_TEMPORARY_DATA_BUF_MAP)TEMPORARY_DATA_BUFFER_MAP_ADDR;
+	dataBufMapPtr = (P_DATA_BUF_MAP) DATA_BUFFER_MAP_ADDR; //数据缓存映射地址
+	dataBufHashTablePtr = (P_DATA_BUF_HASH_TABLE)DATA_BUFFFER_HASH_TABLE_ADDR;//数据缓存哈希表地址
+	tempDataBufMapPtr = (P_TEMPORARY_DATA_BUF_MAP)TEMPORARY_DATA_BUFFER_MAP_ADDR;//临时数据缓存映射地址
 
+									//可用的数据缓冲区输入的数量  16 * USER_DIES
 	for(bufEntry = 0; bufEntry < AVAILABLE_DATA_BUFFER_ENTRY_COUNT; bufEntry++)
 	{
 		dataBufMapPtr->dataBuf[bufEntry].logicalSliceAddr = LSA_NONE;
 		dataBufMapPtr->dataBuf[bufEntry].prevEntry = bufEntry-1;
 		dataBufMapPtr->dataBuf[bufEntry].nextEntry = bufEntry+1;
-		dataBufMapPtr->dataBuf[bufEntry].dirty = DATA_BUF_CLEAN;
+		dataBufMapPtr->dataBuf[bufEntry].dirty = DATA_BUF_CLEAN;//脏的数据
 		dataBufMapPtr->dataBuf[bufEntry].blockingReqTail =  REQ_SLOT_TAG_NONE;
 
 		dataBufHashTablePtr->dataBufHash[bufEntry].headEntry = DATA_BUF_NONE;
@@ -80,6 +81,7 @@ void InitDataBuf()
 	dataBufMapPtr->dataBuf[AVAILABLE_DATA_BUFFER_ENTRY_COUNT - 1].nextEntry = DATA_BUF_NONE;
 	dataBufLruList.headEntry = 0 ;
 	dataBufLruList.tailEntry = AVAILABLE_DATA_BUFFER_ENTRY_COUNT - 1;
+	//最近最少算法（LRU） 缓存替换
 
 	for(bufEntry = 0; bufEntry < AVAILABLE_TEMPORARY_DATA_BUFFER_ENTRY_COUNT; bufEntry++)
 		tempDataBufMapPtr->tempDataBuf[bufEntry].blockingReqTail =  REQ_SLOT_TAG_NONE;
@@ -94,8 +96,9 @@ unsigned int CheckDataBufHit(unsigned int reqSlotTag)
 
 	while(bufEntry != DATA_BUF_NONE)
 	{
-		if(dataBufMapPtr->dataBuf[bufEntry].logicalSliceAddr == logicalSliceAddr)
+		if(dataBufMapPtr->dataBuf[bufEntry].logicalSliceAddr == logicalSliceAddr) //hit
 		{
+			//调整bufEntry在buffer中的位置
 			if((dataBufMapPtr->dataBuf[bufEntry].nextEntry != DATA_BUF_NONE) && (dataBufMapPtr->dataBuf[bufEntry].prevEntry != DATA_BUF_NONE))
 			{
 				dataBufMapPtr->dataBuf[dataBufMapPtr->dataBuf[bufEntry].prevEntry].nextEntry = dataBufMapPtr->dataBuf[bufEntry].nextEntry;
@@ -134,7 +137,7 @@ unsigned int CheckDataBufHit(unsigned int reqSlotTag)
 
 			return bufEntry;
 		}
-		else
+		else       //miss. the next
 			bufEntry = dataBufMapPtr->dataBuf[bufEntry].hashNextEntry;
 	}
 
@@ -143,21 +146,25 @@ unsigned int CheckDataBufHit(unsigned int reqSlotTag)
 
 unsigned int AllocateDataBuf()
 {
-	unsigned int evictedEntry = dataBufLruList.tailEntry;
+	unsigned int evictedEntry = dataBufLruList.tailEntry;  //选取一个受害者条目(LRU)
 
 	if(evictedEntry == DATA_BUF_NONE)
 		assert(!"[WARNING] There is no valid buffer entry [WARNING]");
 
+	//从dataBuf数组中维护一个dataBufLruList的链表关系        ----LRU算法选择受害者
 	if(dataBufMapPtr->dataBuf[evictedEntry].prevEntry != DATA_BUF_NONE)
 	{
 		dataBufMapPtr->dataBuf[dataBufMapPtr->dataBuf[evictedEntry].prevEntry].nextEntry = DATA_BUF_NONE;
 		dataBufLruList.tailEntry = dataBufMapPtr->dataBuf[evictedEntry].prevEntry;
+		//从尾部切断了一个下来
+
 
 		dataBufMapPtr->dataBuf[evictedEntry].prevEntry = DATA_BUF_NONE;
 		dataBufMapPtr->dataBuf[evictedEntry].nextEntry = dataBufLruList.headEntry;
 		dataBufMapPtr->dataBuf[dataBufLruList.headEntry].prevEntry = evictedEntry;
 		dataBufLruList.headEntry = evictedEntry;
 
+		//将evictedEntry从尾部调到首部
 	}
 	else
 	{
@@ -165,9 +172,11 @@ unsigned int AllocateDataBuf()
 		dataBufMapPtr->dataBuf[evictedEntry].nextEntry = DATA_BUF_NONE;
 		dataBufLruList.headEntry = evictedEntry;
 		dataBufLruList.tailEntry = evictedEntry;
+		//这是一个空的dataBuf
 	}
 
 	SelectiveGetFromDataBufHashList(evictedEntry);
+	//从dataBuf数组中的HashList关系中把删除
 
 	return evictedEntry;
 }
@@ -176,7 +185,7 @@ unsigned int AllocateDataBuf()
 void UpdateDataBufEntryInfoBlockingReq(unsigned int bufEntry, unsigned int reqSlotTag)
 {
 	if(dataBufMapPtr->dataBuf[bufEntry].blockingReqTail != REQ_SLOT_TAG_NONE)
-	{
+	{//？？？？？？？？？？？？？
 		reqPoolPtr->reqPool[reqSlotTag].prevBlockingReq = dataBufMapPtr->dataBuf[bufEntry].blockingReqTail;
 		reqPoolPtr->reqPool[reqPoolPtr->reqPool[reqSlotTag].prevBlockingReq].nextBlockingReq  = reqSlotTag;
 	}
@@ -232,26 +241,27 @@ void SelectiveGetFromDataBufHashList(unsigned int bufEntry)
 	{
 		unsigned int prevBufEntry, nextBufEntry, hashEntry;
 
+		//在hash链表中的位置
 		prevBufEntry =  dataBufMapPtr->dataBuf[bufEntry].hashPrevEntry;
 		nextBufEntry =  dataBufMapPtr->dataBuf[bufEntry].hashNextEntry;
 		hashEntry = FindDataBufHashTableEntry(dataBufMapPtr->dataBuf[bufEntry].logicalSliceAddr);
 
-		if((nextBufEntry != DATA_BUF_NONE) && (prevBufEntry != DATA_BUF_NONE))
+		if((nextBufEntry != DATA_BUF_NONE) && (prevBufEntry != DATA_BUF_NONE)) //中间
 		{
 			dataBufMapPtr->dataBuf[prevBufEntry].hashNextEntry = nextBufEntry;
 			dataBufMapPtr->dataBuf[nextBufEntry].hashPrevEntry = prevBufEntry;
 		}
-		else if((nextBufEntry == DATA_BUF_NONE) && (prevBufEntry != DATA_BUF_NONE))
+		else if((nextBufEntry == DATA_BUF_NONE) && (prevBufEntry != DATA_BUF_NONE)) //尾
 		{
 			dataBufMapPtr->dataBuf[prevBufEntry].hashNextEntry = DATA_BUF_NONE;
 			dataBufHashTablePtr->dataBufHash[hashEntry].tailEntry = prevBufEntry;
 		}
-		else if((nextBufEntry != DATA_BUF_NONE) && (prevBufEntry == DATA_BUF_NONE))
+		else if((nextBufEntry != DATA_BUF_NONE) && (prevBufEntry == DATA_BUF_NONE)) //首
 		{
 			dataBufMapPtr->dataBuf[nextBufEntry].hashPrevEntry = DATA_BUF_NONE;
 			dataBufHashTablePtr->dataBufHash[hashEntry].headEntry = nextBufEntry;
 		}
-		else
+		else        //有且只有一个
 		{
 			dataBufHashTablePtr->dataBufHash[hashEntry].headEntry = DATA_BUF_NONE;
 			dataBufHashTablePtr->dataBufHash[hashEntry].tailEntry = DATA_BUF_NONE;

@@ -79,6 +79,7 @@ void handle_set_features(NVME_ADMIN_COMMAND *nvmeAdminCmd, NVME_COMPLETION *nvme
 	ADMIN_SET_FEATURES_DW10 features;
 
 	features.dword = nvmeAdminCmd->dword10;
+	//根据dword10中的一字节确定需要更改什么状态
 
 	switch(features.FID)
 	{
@@ -182,7 +183,19 @@ void handle_get_features(NVME_ADMIN_COMMAND *nvmeAdminCmd, NVME_COMPLETION *nvme
 void handle_create_io_sq(NVME_ADMIN_COMMAND *nvmeAdminCmd, NVME_COMPLETION *nvmeCPL)
 {
 	ADMIN_CREATE_IO_SQ_DW10 sqInfo10;
+
+	//qID为提交队列标识符                                       qSIZE为提交队列的大小 (0<size<=maxSize)
+	//此标识符对应于用于此命令的SQ Tail门铃
+
 	ADMIN_CREATE_IO_SQ_DW11 sqInfo11;
+	//CQID为完成队列ID
+	//QPRIO为队列优先级
+	/*PC:
+	 * 如果设置为“1”，则提交队列物理上是连续的，而prp条目1（prp1）是连续物理缓冲区的地址。
+	 * 如果清除为“0”，则提交队列在物理上不是连续的，并且prp条目1（prp1）是prp列表指针。
+	 * 如果该位清除为“0”，并且cap.cqr设置为“1”，则控制器应返回命令中无效字段的错误。
+	 * 如果队列位于控制器内存缓冲区，并且PC被清除为“0”，则控制器应使命令失败，控制器内存缓冲区状态的使用无效。
+	*/
 	NVME_IO_SQ_STATUS *ioSqStatus;
 	unsigned int ioSqIdx;
 
@@ -194,9 +207,10 @@ void handle_create_io_sq(NVME_ADMIN_COMMAND *nvmeAdminCmd, NVME_COMPLETION *nvme
 	ASSERT((nvmeAdminCmd->PRP1[0] & 0xF) == 0 && nvmeAdminCmd->PRP1[1] < 0x10);
 	ASSERT(0 < sqInfo10.QID && sqInfo10.QID <= 8 && sqInfo10.QSIZE < 0x100 && 0 < sqInfo11.CQID && sqInfo11.CQID <= 8);
 
-	ioSqIdx = sqInfo10.QID - 1;
-	ioSqStatus = g_nvmeTask.ioSqInfo + ioSqIdx;
+	ioSqIdx = sqInfo10.QID - 1;           //IO_提交队列的索引
+	ioSqStatus = g_nvmeTask.ioSqInfo + ioSqIdx;       //获取实际的IO_SQ数据结构????
 
+	//创建新的io_sq    （通过调用set_io_sq）
 	ioSqStatus->valid = 1;
 	ioSqStatus->qSzie = sqInfo10.QSIZE;
 	ioSqStatus->cqVector = sqInfo11.CQID;
@@ -204,7 +218,7 @@ void handle_create_io_sq(NVME_ADMIN_COMMAND *nvmeAdminCmd, NVME_COMPLETION *nvme
 	ioSqStatus->pcieBaseAddrH = nvmeAdminCmd->PRP1[1];
 
 	set_io_sq(ioSqIdx, ioSqStatus->valid, ioSqStatus->cqVector, ioSqStatus->qSzie, ioSqStatus->pcieBaseAddrL, ioSqStatus->pcieBaseAddrH);
-
+	//complement
 	nvmeCPL->dword[0] = 0;
 	nvmeCPL->specific = 0x0;
 
@@ -220,9 +234,10 @@ void handle_delete_io_sq(NVME_ADMIN_COMMAND *nvmeAdminCmd, NVME_COMPLETION *nvme
 
 	xil_printf("delete sq: 0x%08X\r\n", sqInfo10.dword);
 
-	ioSqIdx = (unsigned int)sqInfo10.QID - 1;
+	ioSqIdx = (unsigned int)sqInfo10.QID - 1;       //根据QID得到IO_SQ的索引
 	ioSqStatus = g_nvmeTask.ioSqInfo + ioSqIdx;
 
+	//通过ioSqIdx,调用set_io_sq来删除这个SQ队列
 	ioSqStatus->valid = 0;
 	ioSqStatus->cqVector = 0;
 	ioSqStatus->qSzie = 0;
@@ -301,6 +316,7 @@ void handle_identify(NVME_ADMIN_COMMAND *nvmeAdminCmd, NVME_COMPLETION *nvmeCPL)
 
 	identifyInfo.dword = nvmeAdminCmd->dword10;
 
+	//CNS -- controller or namespace structure
 	if(identifyInfo.CNS == 1)
 	{
 		if((nvmeAdminCmd->PRP1[0] & 0xF) != 0 || (nvmeAdminCmd->PRP2[0] & 0xF) != 0)
@@ -309,6 +325,7 @@ void handle_identify(NVME_ADMIN_COMMAND *nvmeAdminCmd, NVME_COMPLETION *nvmeCPL)
 		ASSERT((nvmeAdminCmd->PRP1[0] & 0xF) == 0 && (nvmeAdminCmd->PRP2[0] & 0xF) == 0);
 		identify_controller(pIdentifyData);
 	}
+
 	else if(identifyInfo.CNS == 0)
 	{
 		if((nvmeAdminCmd->PRP1[0] & 0xF) != 0 || (nvmeAdminCmd->PRP2[0] & 0xF) != 0)
@@ -381,6 +398,9 @@ void handle_nvme_admin_cmd(NVME_COMMAND *nvmeCmd)
 {
 	NVME_ADMIN_COMMAND *nvmeAdminCmd;
 	NVME_COMPLETION nvmeCPL;
+
+	//nvmeCPL保存完成信息，返回给程序
+
 	unsigned int opc;
 	unsigned int needCpl;
 	unsigned int needSlotRelease;
@@ -398,12 +418,12 @@ void handle_nvme_admin_cmd(NVME_COMMAND *nvmeCmd)
 			handle_set_features(nvmeAdminCmd, &nvmeCPL);
 			break;
 		}
-		case ADMIN_CREATE_IO_CQ:
+		case ADMIN_CREATE_IO_CQ:                    //CQ
 		{
 			handle_create_io_cq(nvmeAdminCmd, &nvmeCPL);
 			break;
 		}
-		case ADMIN_CREATE_IO_SQ:
+		case ADMIN_CREATE_IO_SQ:                    //创建IO_SQ
 		{
 			handle_create_io_sq(nvmeAdminCmd, &nvmeCPL);
 			break;
@@ -418,17 +438,17 @@ void handle_nvme_admin_cmd(NVME_COMMAND *nvmeCmd)
 			handle_get_features(nvmeAdminCmd, &nvmeCPL);
 			break;
 		}
-		case ADMIN_DELETE_IO_CQ:
+		case ADMIN_DELETE_IO_CQ:                     //CQ
 		{
 			handle_delete_io_cq(nvmeAdminCmd, &nvmeCPL);
 			break;
 		}
-		case ADMIN_DELETE_IO_SQ:
+		case ADMIN_DELETE_IO_SQ:                    //删除IO_SQ
 		{
 			handle_delete_io_sq(nvmeAdminCmd, &nvmeCPL);
 			break;
 		}
-		case ADMIN_ASYNCHRONOUS_EVENT_REQUEST:
+		case ADMIN_ASYNCHRONOUS_EVENT_REQUEST:   //处理异步
 		{
 			needCpl = 0;
 			needSlotRelease = 1;
@@ -436,13 +456,13 @@ void handle_nvme_admin_cmd(NVME_COMMAND *nvmeCmd)
 			nvmeCPL.specific = 0x0;
 			break;
 		}
-		case ADMIN_GET_LOG_PAGE:
+		case ADMIN_GET_LOG_PAGE:            //作废
 		{
 			handle_get_log_page(nvmeAdminCmd, &nvmeCPL);
 			break;
 		}
 
-		default:
+		default:                            //错误请求
 		{
 			xil_printf("Not Support Admin Command OPC: %X\r\n", opc);
 			ASSERT(0);
@@ -450,9 +470,10 @@ void handle_nvme_admin_cmd(NVME_COMMAND *nvmeCmd)
 		}
 	}
 
-	if(needCpl == 1)
+	//完成信息的处理
+	if(needCpl == 1)         //非异步
 		set_auto_nvme_cpl(nvmeCmd->cmdSlotTag, nvmeCPL.specific, nvmeCPL.statusFieldWord);
-	else if(needSlotRelease == 1)
+	else if(needSlotRelease == 1)       //异步！
 		set_nvme_slot_release(nvmeCmd->cmdSlotTag);
 	else
 		set_nvme_cpl(0, 0, nvmeCPL.specific, nvmeCPL.statusFieldWord);

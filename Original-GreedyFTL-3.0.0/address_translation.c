@@ -49,9 +49,9 @@
 #include "memory_map.h"
 #include "xil_printf.h"
 
-P_LOGICAL_SLICE_MAP logicalSliceMapPtr;
 P_VIRTUAL_SLICE_MAP virtualSliceMapPtr;
 P_VIRTUAL_BLOCK_MAP virtualBlockMapPtr;
+P_LOGICAL_SLICE_MAP logicalSliceMapPtr;
 P_VIRTUAL_DIE_MAP virtualDieMapPtr;
 P_PHY_BLOCK_MAP phyBlockMapPtr;
 P_BAD_BLOCK_TABLE_INFO_MAP bbtInfoMapPtr;
@@ -64,19 +64,22 @@ void InitAddressMap()
 {
 	unsigned int blockNo, dieNo;
 
-	logicalSliceMapPtr = (P_LOGICAL_SLICE_MAP ) LOGICAL_SLICE_MAP_ADDR;
+	logicalSliceMapPtr = (P_LOGICAL_SLICE_MAP ) LOGICAL_SLICE_MAP_ADDR; //逻辑slice映射地址
 	virtualSliceMapPtr = (P_VIRTUAL_SLICE_MAP) VIRTUAL_SLICE_MAP_ADDR;
 	virtualBlockMapPtr = (P_VIRTUAL_BLOCK_MAP) VIRTUAL_BLOCK_MAP_ADDR;
 	virtualDieMapPtr = (P_VIRTUAL_DIE_MAP) VIRTUAL_DIE_MAP_ADDR;
 	phyBlockMapPtr = (P_PHY_BLOCK_MAP) PHY_BLOCK_MAP_ADDR;
 	bbtInfoMapPtr = (P_BAD_BLOCK_TABLE_INFO_MAP) BAD_BLOCK_TABLE_INFO_MAP_ADDR;
+	//坏块信息映射
 
 	//init phyblockMap
 	for(dieNo=0 ; dieNo<USER_DIES ; dieNo++)
 	{
 		for(blockNo=0 ; blockNo<TOTAL_BLOCKS_PER_DIE ; blockNo++)
 			phyBlockMapPtr->phyBlock[dieNo][blockNo].remappedPhyBlock = blockNo;
+											//重新映射物理块
 
+		//坏块
 		bbtInfoMapPtr->bbtInfo[dieNo].phyBlock = 0;
 		bbtInfoMapPtr->bbtInfo[dieNo].grownBadUpdate = BBT_INFO_GROWN_BAD_UPDATE_NONE;
 	}
@@ -646,12 +649,12 @@ unsigned int AddrTransWrite(unsigned int logicalSliceAddr)
 	{
 		InvalidateOldVsa(logicalSliceAddr);
 
-		virtualSliceAddr = FindFreeVirtualSlice();
+		virtualSliceAddr = FindFreeVirtualSlice();//用一个新的虚拟地址和该逻辑地址对应
 
 		logicalSliceMapPtr->logicalSlice[logicalSliceAddr].virtualSliceAddr = virtualSliceAddr;
 		virtualSliceMapPtr->virtualSlice[virtualSliceAddr].logicalSliceAddr = logicalSliceAddr;
 
-		return virtualSliceAddr;
+		return virtualSliceAddr;         //返回这个虚拟地址
 	}
 	else
 		assert(!"[WARNING] Logical address is larger than maximum logical address served by SSD [WARNING]");
@@ -752,7 +755,7 @@ unsigned int FindDieForFreeSliceAllocation()
 	return targetDie;
 }
 
-void InvalidateOldVsa(unsigned int logicalSliceAddr)
+void InvalidateOldVsa(unsigned int logicalSliceAddr) //把该逻辑地址对应的地址置为无效
 {
 	unsigned int virtualSliceAddr, dieNo, blockNo;
 
@@ -761,16 +764,19 @@ void InvalidateOldVsa(unsigned int logicalSliceAddr)
 	if(virtualSliceAddr != VSA_NONE)
 	{
 		if(virtualSliceMapPtr->virtualSlice[virtualSliceAddr].logicalSliceAddr != logicalSliceAddr)
+			//对应关系错误
 			return;
 
 		dieNo = Vsa2VdieTranslation(virtualSliceAddr);
 		blockNo = Vsa2VblockTranslation(virtualSliceAddr);
 
 		// unlink
+		//从垃圾回收链表中去除
 		SelectiveGetFromGcVictimList(dieNo, blockNo);
 		virtualBlockMapPtr->block[dieNo][blockNo].invalidSliceCnt++;
 		logicalSliceMapPtr->logicalSlice[logicalSliceAddr].virtualSliceAddr = VSA_NONE;
 
+		//放入垃圾回收链表
 		PutToGcVictimList(dieNo, blockNo, virtualBlockMapPtr->block[dieNo][blockNo].invalidSliceCnt);
 	}
 

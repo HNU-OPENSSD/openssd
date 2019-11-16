@@ -60,6 +60,7 @@ void InitDependencyTable()
 {
 	unsigned int blockNo, wayNo, chNo;
 	rowAddrDependencyTablePtr = (P_ROW_ADDR_DEPENDENCY_TABLE)ROW_ADDR_DEPENDENCY_TABLE_ADDR;
+	//行地址~指针
 
 	for(blockNo=0 ; blockNo<MAIN_BLOCKS_PER_DIE ; blockNo++)
 	{
@@ -79,11 +80,14 @@ void ReqTransNvmeToSlice(unsigned int cmdSlotTag, unsigned int startLba, unsigne
 {
 	unsigned int reqSlotTag, requestedNvmeBlock, tempNumOfNvmeBlock, transCounter, tempLsa, loop, nvmeBlockOffset, nvmeDmaStartIndex, reqCode;
 
-	requestedNvmeBlock = nlb + 1;
+	//四个四个的将block传入slice
+	//一个slice  --  4个block
+	requestedNvmeBlock = nlb + 1;    //请求写/读的block数量
 	transCounter = 0;
-	nvmeDmaStartIndex = 0;
-	tempLsa = startLba / NVME_BLOCKS_PER_SLICE;
+	nvmeDmaStartIndex = 0;           //DMA基址的偏移量
+	tempLsa = startLba / NVME_BLOCKS_PER_SLICE;   //slice开头的地址
 	loop = ((startLba % NVME_BLOCKS_PER_SLICE) + requestedNvmeBlock) / NVME_BLOCKS_PER_SLICE;
+	//要循环的次数
 
 	if(cmdCode == IO_NVM_WRITE)
 		reqCode = REQ_CODE_WRITE;
@@ -92,15 +96,21 @@ void ReqTransNvmeToSlice(unsigned int cmdSlotTag, unsigned int startLba, unsigne
 	else
 		assert(!"[WARNING] Not supported command code [WARNING]");
 
+	//to slice
 	//first transform
+
+	//第一次用几个block来填满第一个slice
 	nvmeBlockOffset = (startLba % NVME_BLOCKS_PER_SLICE);
 	if(loop)
 		tempNumOfNvmeBlock = NVME_BLOCKS_PER_SLICE - nvmeBlockOffset;
 	else
 		tempNumOfNvmeBlock = requestedNvmeBlock;
+	//第一次用几个block来填满第一个slice
 
-	reqSlotTag = GetFromFreeReqQ();
+	reqSlotTag = GetFromFreeReqQ();  //生成一个新的请求 (通过索引在请求池中访问该请求)
 
+	//为什么一般的读写都是DMA命令
+	//对请求赋值、然后放入SliceReqQ
 	reqPoolPtr->reqPool[reqSlotTag].reqType = REQ_TYPE_SLICE;
 	reqPoolPtr->reqPool[reqSlotTag].reqCode = reqCode;
 	reqPoolPtr->reqPool[reqSlotTag].nvmeCmdSlotTag = cmdSlotTag;
@@ -109,14 +119,16 @@ void ReqTransNvmeToSlice(unsigned int cmdSlotTag, unsigned int startLba, unsigne
 	reqPoolPtr->reqPool[reqSlotTag].nvmeDmaInfo.nvmeBlockOffset = nvmeBlockOffset;
 	reqPoolPtr->reqPool[reqSlotTag].nvmeDmaInfo.numOfNvmeBlock = tempNumOfNvmeBlock;
 
-	PutToSliceReqQ(reqSlotTag);
+	PutToSliceReqQ(reqSlotTag);      //将该请求放入SliceReqQ
+	//first transform completed
 
-	tempLsa++;
-	transCounter++;
-	nvmeDmaStartIndex += tempNumOfNvmeBlock;
 
 	//transform continue
-	while(transCounter < loop)
+	tempLsa++;               //logical_Slice_Addr ++
+	transCounter++;          //循环次数++
+	nvmeDmaStartIndex += tempNumOfNvmeBlock;  //DMA的地址偏移+=放入的block数目
+
+	while(transCounter < loop)       //循环放入中间的block
 	{
 		nvmeBlockOffset = 0;
 		tempNumOfNvmeBlock = NVME_BLOCKS_PER_SLICE;
@@ -155,20 +167,26 @@ void ReqTransNvmeToSlice(unsigned int cmdSlotTag, unsigned int startLba, unsigne
 	reqPoolPtr->reqPool[reqSlotTag].nvmeDmaInfo.numOfNvmeBlock = tempNumOfNvmeBlock;
 
 	PutToSliceReqQ(reqSlotTag);
+	//至此，将要写入的logical block放入slice中的请求准备完毕，都在SliceReqQ中
 }
 
 
 
-void EvictDataBufEntry(unsigned int originReqSlotTag)
+void EvictDataBufEntry(unsigned int originReqSlotTag)  //缓存替换时写入nand
 {
+	//originReqSlotTag传进来使用了datatBufInfo.entry,刚才赋值的（原本缓存中的位置）和
 	unsigned int reqSlotTag, virtualSliceAddr, dataBufEntry;
 
 	dataBufEntry = reqPoolPtr->reqPool[originReqSlotTag].dataBufInfo.entry;
 	if(dataBufMapPtr->dataBuf[dataBufEntry].dirty == DATA_BUF_DIRTY)
 	{
+		//新建一个请求，将脏bufEntry内容写入nand
 		reqSlotTag = GetFromFreeReqQ();
+		//生成一个地址的对应关系 (-------FTL------)
 		virtualSliceAddr =  AddrTransWrite(dataBufMapPtr->dataBuf[dataBufEntry].logicalSliceAddr);
 
+		//为什么将缓存脏数据写入NAND是NAND命令
+		//如果请求是脏的，（写请求） ，那么
 		reqPoolPtr->reqPool[reqSlotTag].reqType = REQ_TYPE_NAND;
 		reqPoolPtr->reqPool[reqSlotTag].reqCode = REQ_CODE_WRITE;
 		reqPoolPtr->reqPool[reqSlotTag].nvmeCmdSlotTag = reqPoolPtr->reqPool[originReqSlotTag].nvmeCmdSlotTag;
@@ -180,7 +198,7 @@ void EvictDataBufEntry(unsigned int originReqSlotTag)
 		reqPoolPtr->reqPool[reqSlotTag].reqOpt.rowAddrDependencyCheck = REQ_OPT_ROW_ADDR_DEPENDENCY_CHECK;
 		reqPoolPtr->reqPool[reqSlotTag].reqOpt.blockSpace = REQ_OPT_BLOCK_SPACE_MAIN;
 		reqPoolPtr->reqPool[reqSlotTag].dataBufInfo.entry = dataBufEntry;
-		UpdateDataBufEntryInfoBlockingReq(dataBufEntry, reqSlotTag);
+		UpdateDataBufEntryInfoBlockingReq(dataBufEntry, reqSlotTag);//放入阻塞请求队列中去
 		reqPoolPtr->reqPool[reqSlotTag].nandInfo.virtualSliceAddr = virtualSliceAddr;
 
 		SelectLowLevelReqQ(reqSlotTag);
@@ -194,8 +212,10 @@ void DataReadFromNand(unsigned int originReqSlotTag)
 	unsigned int reqSlotTag, virtualSliceAddr;
 
 	virtualSliceAddr =  AddrTransRead(reqPoolPtr->reqPool[originReqSlotTag].logicalSliceAddr);
+	//检测是否越界、逻辑地址转换成虚拟地址
+	xil_printf("DataReadFromNand----%d\r\n",virtualSliceAddr);
 
-	if(virtualSliceAddr != VSA_FAIL)
+	if(virtualSliceAddr != VSA_FAIL)      //正确转换
 	{
 		reqSlotTag = GetFromFreeReqQ();
 
@@ -219,38 +239,52 @@ void DataReadFromNand(unsigned int originReqSlotTag)
 }
 
 
-void ReqTransSliceToLowLevel()
+void ReqTransSliceToLowLevel()     //处理SliceReqQ中的每个请求
 {
 	unsigned int reqSlotTag, dataBufEntry;
 
 	while(sliceReqQ.headReq != REQ_SLOT_TAG_NONE)
 	{
-		reqSlotTag = GetFromSliceReqQ();
+		reqSlotTag = GetFromSliceReqQ();    //从SliceReqQ中取出第一个请求
 		if(reqSlotTag == REQ_SLOT_TAG_FAIL)
 			return ;
 
+		//缓存是请求的缓存
 		//allocate a data buffer entry for this request
 		dataBufEntry = CheckDataBufHit(reqSlotTag);
+		//通过logicalAddr检测是否命中   若命中，返回在data buffer中的索引
 		if(dataBufEntry != DATA_BUF_FAIL)
 		{
 			//data buffer hit
 			reqPoolPtr->reqPool[reqSlotTag].dataBufInfo.entry = dataBufEntry;
+			//更新该请求中的buffer信息
 		}
+		//维护了一个hash链表，用来记录逻辑上条目是否存在于buf
 		else
 		{
 			//data buffer miss, allocate a new buffer entry
-			dataBufEntry = AllocateDataBuf();
+			dataBufEntry = AllocateDataBuf();      //选择一个受害者替换，返回要替换的位置
 			reqPoolPtr->reqPool[reqSlotTag].dataBufInfo.entry = dataBufEntry;
+			//该请求的buf信息替换为分配的位置
 
 			//clear the allocated data buffer entry being used by a previous request
-			EvictDataBufEntry(reqSlotTag);
+			EvictDataBufEntry(reqSlotTag);       //将脏缓存写入nand    ************
 
 			//update meta-data of the allocated data buffer entry
+			//更新实际的缓存dataBuf
 			dataBufMapPtr->dataBuf[dataBufEntry].logicalSliceAddr = reqPoolPtr->reqPool[reqSlotTag].logicalSliceAddr;
+			//更新逻辑上的存在
 			PutToDataBufHashList(dataBufEntry);
 
+			//为什么不命中才触发????????
+			//read-modify-write????
+
 			if(reqPoolPtr->reqPool[reqSlotTag].reqCode  == REQ_CODE_READ)
+			{
+				xil_printf("ReqTrans----%d:%d\r\n",reqPoolPtr->reqPool[reqSlotTag].logicalSliceAddr,reqPoolPtr->reqPool[reqSlotTag].nandInfo.virtualSliceAddr);
 				DataReadFromNand(reqSlotTag);
+			}
+
 			else if(reqPoolPtr->reqPool[reqSlotTag].reqCode  == REQ_CODE_WRITE)
 				if(reqPoolPtr->reqPool[reqSlotTag].nvmeDmaInfo.numOfNvmeBlock != NVME_BLOCKS_PER_SLICE) //for read modify write
 					DataReadFromNand(reqSlotTag);
@@ -259,6 +293,7 @@ void ReqTransSliceToLowLevel()
 		//transform this slice request to nvme request
 		if(reqPoolPtr->reqPool[reqSlotTag].reqCode  == REQ_CODE_WRITE)
 		{
+			//写请求会让缓存中的请求变脏，为什么？
 			dataBufMapPtr->dataBuf[dataBufEntry].dirty = DATA_BUF_DIRTY;
 			reqPoolPtr->reqPool[reqSlotTag].reqCode = REQ_CODE_RxDMA;
 		}
@@ -271,6 +306,7 @@ void ReqTransSliceToLowLevel()
 		reqPoolPtr->reqPool[reqSlotTag].reqOpt.dataBufFormat = REQ_OPT_DATA_BUF_ENTRY;
 
 		UpdateDataBufEntryInfoBlockingReq(dataBufEntry, reqSlotTag);
+		//把req放入
 		SelectLowLevelReqQ(reqSlotTag);
 	}
 }
@@ -281,6 +317,7 @@ unsigned int CheckBufDep(unsigned int reqSlotTag)
 		return BUF_DEPENDENCY_REPORT_PASS;
 	else
 		return BUF_DEPENDENCY_REPORT_BLOCKED;
+	//dependency????
 }
 
 
@@ -296,12 +333,14 @@ unsigned int CheckRowAddrDep(unsigned int reqSlotTag, unsigned int checkRowAddrD
 		blockNo = Vsa2VblockTranslation(reqPoolPtr->reqPool[reqSlotTag].nandInfo.virtualSliceAddr);
 		pageNo = Vsa2VpageTranslation(reqPoolPtr->reqPool[reqSlotTag].nandInfo.virtualSliceAddr);
 	}
+	//计算出各个地址
 	else
 		assert(!"[WARNING] Not supported reqOpt-nandAddress [WARNING]");
 
+	//读
 	if(reqPoolPtr->reqPool[reqSlotTag].reqCode == REQ_CODE_READ)
 	{
-		if(checkRowAddrDepOpt == ROW_ADDR_DEPENDENCY_CHECK_OPT_SELECT)
+		if(checkRowAddrDepOpt == ROW_ADDR_DEPENDENCY_CHECK_OPT_SELECT)   //0 - 0进来check
 		{
 			if(rowAddrDependencyTablePtr->block[chNo][wayNo][blockNo].blockedEraseReqFlag)
 				SyncReleaseEraseReq(chNo, wayNo, blockNo);
@@ -362,7 +401,7 @@ unsigned int UpdateRowAddrDepTableForBufBlockedReq(unsigned int reqSlotTag)
 {
 	unsigned int dieNo, chNo, wayNo, blockNo, pageNo, bufDepCheckReport;
 
-	if(reqPoolPtr->reqPool[reqSlotTag].reqOpt.nandAddr == REQ_OPT_NAND_ADDR_VSA)
+	if(reqPoolPtr->reqPool[reqSlotTag].reqOpt.nandAddr == REQ_OPT_NAND_ADDR_VSA)//virtualSliceAddr
 	{
 		dieNo = Vsa2VdieTranslation(reqPoolPtr->reqPool[reqSlotTag].nandInfo.virtualSliceAddr);
 		chNo =  Vdie2PchTranslation(dieNo);
@@ -373,17 +412,19 @@ unsigned int UpdateRowAddrDepTableForBufBlockedReq(unsigned int reqSlotTag)
 	else
 		assert(!"[WARNING] Not supported reqOpt-nandAddress [WARNING]");
 
-	if(reqPoolPtr->reqPool[reqSlotTag].reqCode == REQ_CODE_READ)
+	if(reqPoolPtr->reqPool[reqSlotTag].reqCode == REQ_CODE_READ)   //读请求
 	{
+		//防止正在擦除时读
 		if(rowAddrDependencyTablePtr->block[chNo][wayNo][blockNo].blockedEraseReqFlag)
 		{
 			SyncReleaseEraseReq(chNo, wayNo, blockNo);
 
-			bufDepCheckReport = CheckBufDep(reqSlotTag);
+			bufDepCheckReport = CheckBufDep(reqSlotTag); //请求未被阻塞
 			if(bufDepCheckReport == BUF_DEPENDENCY_REPORT_PASS)
 			{
 				if(pageNo < rowAddrDependencyTablePtr->block[chNo][wayNo][blockNo].permittedProgPage)
 					PutToNandReqQ(reqSlotTag, chNo, wayNo);
+				//放入nandReq   或者 放入BlockedRowAddrDepReqQ
 				else
 				{
 					rowAddrDependencyTablePtr->block[chNo][wayNo][blockNo].blockedReadReqCnt++;
@@ -408,15 +449,19 @@ void SelectLowLevelReqQ(unsigned int reqSlotTag)
 	unsigned int dieNo, chNo, wayNo, bufDepCheckReport, rowAddrDepCheckReport, rowAddrDepTableUpdateReport;
 
 	bufDepCheckReport = CheckBufDep(reqSlotTag);
-	if(bufDepCheckReport == BUF_DEPENDENCY_REPORT_PASS)
+	//判断req是否是blocked状态，req有一个执行的先后
+	//维护多条命令队列
+	if(bufDepCheckReport == BUF_DEPENDENCY_REPORT_PASS)    //req未被阻塞
 	{
-		if(reqPoolPtr->reqPool[reqSlotTag].reqType  == REQ_TYPE_NVME_DMA)
+		if(reqPoolPtr->reqPool[reqSlotTag].reqType  == REQ_TYPE_NVME_DMA)  //执行NVME_DMA
 		{
-			IssueNvmeDmaReq(reqSlotTag);
-			PutToNvmeDmaReqQ(reqSlotTag);
+			IssueNvmeDmaReq(reqSlotTag);   //执行该DMA请求??IO32WRITE（）写配置信息？？
+			PutToNvmeDmaReqQ(reqSlotTag);  //放入NvmeDmaReqQ队列----为何执行了还要放入队列
 		}
-		else if(reqPoolPtr->reqPool[reqSlotTag].reqType  == REQ_TYPE_NAND)
+		//NAND需要判断在ROW中是否阻塞
+		else if(reqPoolPtr->reqPool[reqSlotTag].reqType  == REQ_TYPE_NAND) //执行NAND
 		{
+			//根据req中的信息计算地址
 			if(reqPoolPtr->reqPool[reqSlotTag].reqOpt.nandAddr == REQ_OPT_NAND_ADDR_VSA)
 			{
 				dieNo = Vsa2VdieTranslation(reqPoolPtr->reqPool[reqSlotTag].nandInfo.virtualSliceAddr);
@@ -431,14 +476,17 @@ void SelectLowLevelReqQ(unsigned int reqSlotTag)
 			else
 				assert(!"[WARNING] Not supported reqOpt-nandAddress [WARNING]");
 
+			//判断在ROW是否被阻塞
 			if(reqPoolPtr->reqPool[reqSlotTag].reqOpt.rowAddrDependencyCheck == REQ_OPT_ROW_ADDR_DEPENDENCY_CHECK)
 			{
 				rowAddrDepCheckReport = CheckRowAddrDep(reqSlotTag, ROW_ADDR_DEPENDENCY_CHECK_OPT_SELECT);
 
 				if(rowAddrDepCheckReport == ROW_ADDR_DEPENDENCY_REPORT_PASS)
 					PutToNandReqQ(reqSlotTag, chNo, wayNo);
+				//pass则放入nandReqQ队列
 				else if(rowAddrDepCheckReport == ROW_ADDR_DEPENDENCY_REPORT_BLOCKED)
 					PutToBlockedByRowAddrDepReqQ(reqSlotTag, chNo, wayNo);
+				//blocked则放入BlockedRowAddrDepReqQ
 				else
 					assert(!"[WARNING] Not supported report [WARNING]");
 			}
@@ -453,22 +501,28 @@ void SelectLowLevelReqQ(unsigned int reqSlotTag)
 	}
 	else if(bufDepCheckReport == BUF_DEPENDENCY_REPORT_BLOCKED)
 	{
+		//请求被阻塞、请求为nand ，请求被rowAddrDep阻塞
 		if(reqPoolPtr->reqPool[reqSlotTag].reqType  == REQ_TYPE_NAND)
 			if(reqPoolPtr->reqPool[reqSlotTag].reqOpt.rowAddrDependencyCheck == REQ_OPT_ROW_ADDR_DEPENDENCY_CHECK)
 			{
+				//更新rowAddrDepTable，更新row阻塞的信息
+				//可能把req放入nandReq，也可能放入阻塞队列
 				rowAddrDepTableUpdateReport = UpdateRowAddrDepTableForBufBlockedReq(reqSlotTag);
 
 				if(rowAddrDepTableUpdateReport == ROW_ADDR_DEPENDENCY_TABLE_UPDATE_REPORT_DONE)
 				{
 					//pass, go to PutToBlockedByBufDepReqQ
 				}
+				//更新阻塞信息完成
+
+				//该请求已被放入nandReqQ/rowAddrDepBlockedReqQ
 				else if(rowAddrDepTableUpdateReport == ROW_ADDR_DEPENDENCY_TABLE_UPDATE_REPORT_SYNC)
 					return;
 				else
 					assert(!"[WARNING] Not supported report [WARNING]");
 			}
 
-		PutToBlockedByBufDepReqQ(reqSlotTag);
+		PutToBlockedByBufDepReqQ(reqSlotTag);    //被bufDep阻塞
 	}
 	else
 		assert(!"[WARNING] Not supported report [WARNING]");
@@ -480,6 +534,7 @@ void ReleaseBlockedByBufDepReq(unsigned int reqSlotTag)
 	unsigned int targetReqSlotTag, dieNo, chNo, wayNo, rowAddrDepCheckReport;
 
 	targetReqSlotTag = REQ_SLOT_TAG_NONE;
+	//释放后面的阻塞请求
 	if(reqPoolPtr->reqPool[reqSlotTag].nextBlockingReq != REQ_SLOT_TAG_NONE)
 	{
 		targetReqSlotTag = reqPoolPtr->reqPool[reqSlotTag].nextBlockingReq;
@@ -487,6 +542,8 @@ void ReleaseBlockedByBufDepReq(unsigned int reqSlotTag)
 		reqPoolPtr->reqPool[reqSlotTag].nextBlockingReq = REQ_SLOT_TAG_NONE;
 	}
 
+	//dataBuf和tempDataBuf有什么区别??????????
+	//如果是DataBuf中的最后一个被阻塞的，删除它
 	if(reqPoolPtr->reqPool[reqSlotTag].reqOpt.dataBufFormat == REQ_OPT_DATA_BUF_ENTRY)
 	{
 		if(dataBufMapPtr->dataBuf[reqPoolPtr->reqPool[reqSlotTag].dataBufInfo.entry].blockingReqTail == reqSlotTag)
@@ -498,10 +555,13 @@ void ReleaseBlockedByBufDepReq(unsigned int reqSlotTag)
 			tempDataBufMapPtr->tempDataBuf[reqPoolPtr->reqPool[reqSlotTag].dataBufInfo.entry].blockingReqTail = REQ_SLOT_TAG_NONE;
 	}
 
+	//target为req的next_blocking_req    如果target在阻塞队列（BUF_DEP）中
 	if((targetReqSlotTag != REQ_SLOT_TAG_NONE) && (reqPoolPtr->reqPool[targetReqSlotTag].reqQueueType == REQ_QUEUE_TYPE_BLOCKED_BY_BUF_DEP))
 	{
+		//从阻塞队列中删除它  ----释放target
 		SelectiveGetFromBlockedByBufDepReqQ(targetReqSlotTag);
 
+		//执行target！
 		if(reqPoolPtr->reqPool[targetReqSlotTag].reqType == REQ_TYPE_NVME_DMA)
 		{
 			IssueNvmeDmaReq(targetReqSlotTag);
@@ -551,7 +611,7 @@ void ReleaseBlockedByRowAddrDepReq(unsigned int chNo, unsigned int wayNo)
 		if(reqPoolPtr->reqPool[reqSlotTag].reqOpt.rowAddrDependencyCheck == REQ_OPT_ROW_ADDR_DEPENDENCY_CHECK)
 		{
 			rowAddrDepCheckReport = CheckRowAddrDep(reqSlotTag, ROW_ADDR_DEPENDENCY_CHECK_OPT_RELEASE);
-
+			//大概一个row只能放那么多req   ---  req->pageNo < permittedProgPage
 			if(rowAddrDepCheckReport == ROW_ADDR_DEPENDENCY_REPORT_PASS)
 			{
 				SelectiveGetFromBlockedByRowAddrDepReqQ(reqSlotTag, chNo, wayNo);
@@ -577,11 +637,12 @@ void IssueNvmeDmaReq(unsigned int reqSlotTag)
 	unsigned int devAddr, dmaIndex, numOfNvmeBlock;
 
 	dmaIndex = reqPoolPtr->reqPool[reqSlotTag].nvmeDmaInfo.startIndex;
-	devAddr = GenerateDataBufAddr(reqSlotTag);
+	devAddr = GenerateDataBufAddr(reqSlotTag); //找到NvmeBlock在BUF中的ADDR
 	numOfNvmeBlock = 0;
 
 	if(reqPoolPtr->reqPool[reqSlotTag].reqCode == REQ_CODE_RxDMA)
 	{
+		//处理各个nvme block
 		while(numOfNvmeBlock < reqPoolPtr->reqPool[reqSlotTag].nvmeDmaInfo.numOfNvmeBlock)
 		{
 			set_auto_rx_dma(reqPoolPtr->reqPool[reqSlotTag].nvmeCmdSlotTag, dmaIndex, devAddr, NVME_COMMAND_AUTO_COMPLETION_ON);
@@ -615,11 +676,11 @@ void CheckDoneNvmeDmaReq()
 	unsigned int reqSlotTag, prevReq;
 	unsigned int rxDone, txDone;
 
-	reqSlotTag = nvmeDmaReqQ.tailReq;
+	reqSlotTag = nvmeDmaReqQ.tailReq;         //最后一个DMA请求
 	rxDone = 0;
 	txDone = 0;
 
-	while(reqSlotTag != REQ_SLOT_TAG_NONE)
+	while(reqSlotTag != REQ_SLOT_TAG_NONE)      //处理所有DMA请求（从尾往前？？？？）
 	{
 		prevReq = reqPoolPtr->reqPool[reqSlotTag].prevReq;
 
@@ -630,6 +691,7 @@ void CheckDoneNvmeDmaReq()
 
 			if(rxDone)
 				SelectiveGetFromNvmeDmaReqQ(reqSlotTag);
+				//将一个DMA请求放到FREE队列去，释放并执行紧跟的一个被阻塞请求
 		}
 		else
 		{
@@ -638,6 +700,7 @@ void CheckDoneNvmeDmaReq()
 
 			if(txDone)
 				SelectiveGetFromNvmeDmaReqQ(reqSlotTag);
+			//将一个DMA请求放到FREE队列去，释放并执行紧跟的一个被阻塞请求
 		}
 
 		reqSlotTag = prevReq;

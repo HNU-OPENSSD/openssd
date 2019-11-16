@@ -51,7 +51,7 @@
 #include "memory_map.h"
 #include "nvme/debug.h"
 
-P_COMPLETE_FLAG_TABLE completeFlagTablePtr;
+P_COMPLETE_FLAG_TABLE completeFlagTablePtr; //完成标记表指针，判断请求标记完成
 P_STATUS_REPORT_TABLE statusReportTablePtr;
 P_ERROR_INFO_TABLE eccErrorInfoTablePtr;
 P_RETRY_LIMIT_TABLE retryLimitTablePtr;
@@ -104,8 +104,6 @@ void InitReqScheduler()
 	}
 }
 
-
-
 void SyncAllLowLevelReqDone()
 {
 	while((nvmeDmaReqQ.headReq != REQ_SLOT_TAG_NONE) || notCompletedNandReqCnt || blockedReqCnt)
@@ -115,7 +113,7 @@ void SyncAllLowLevelReqDone()
 	}
 }
 
-void SyncAvailFreeReq()
+void SyncAvailFreeReq()//同步可获得的空闲请求
 {
 	while(freeReqQ.headReq == REQ_SLOT_TAG_NONE)
 	{
@@ -128,8 +126,8 @@ void SyncReleaseEraseReq(unsigned int chNo, unsigned int wayNo, unsigned int blo
 {
 	while(rowAddrDependencyTablePtr->block[chNo][wayNo][blockNo].blockedEraseReqFlag)
 	{
-		CheckDoneNvmeDmaReq();
-		SchedulingNandReq();
+		CheckDoneNvmeDmaReq();//处理所有DMA请求，将DMA请求放入FREE队列，释放执行紧跟的被阻塞请求
+		SchedulingNandReq();  //调度NandReq     ---DmaReq由DmaController控制而非CPU
 	}
 }
 
@@ -137,37 +135,40 @@ void SchedulingNandReq()
 {
 	int chNo;
 
-	for(chNo = 0; chNo < USER_CHANNELS; chNo++)
+	for(chNo = 0; chNo < USER_CHANNELS; chNo++)   //对所有通道，执行SchedulingNandReq
 		SchedulingNandReqPerCh(chNo);
 }
 
-void SchedulingNandReqPerCh(unsigned int chNo)
+void SchedulingNandReqPerCh(unsigned int chNo)   //对每个通道的NandReq进行调度
 {
 	unsigned int readyBusy, wayNo, reqStatus, nextWay, waitWayCnt;
 
 	waitWayCnt = 0;
+	//每个通道里的每个way
+	//每个通道都有一个wayPriority
 	if(wayPriorityTablePtr->wayPriority[chNo].idleHead != WAY_NONE)
 	{
 		wayNo = wayPriorityTablePtr->wayPriority[chNo].idleHead;
 
-		while(wayNo != WAY_NONE)
+		while(wayNo != WAY_NONE)   //处理所有的wayNo的请求
 		{
 			if(nandReqQ[chNo][wayNo].headReq == REQ_SLOT_TAG_NONE)
 				ReleaseBlockedByRowAddrDepReq(chNo, wayNo);
+		//从阻塞队列中释放req，对每一个阻塞队列中的req，checkRowAddrDep，pass则放入nandReqQ
 
-			if(nandReqQ[chNo][wayNo].headReq != REQ_SLOT_TAG_NONE)
-			{
+			if(nandReqQ[chNo][wayNo].headReq != REQ_SLOT_TAG_NONE) //对nandReqQ
+			{	//如果这个way中存在nandReq   则这个way处理完了（上面的ReleaseBlockedByRow）
 				nextWay = dieStateTablePtr->dieState[chNo][wayNo].nextWay;
 
 				SelectivGetFromNandIdleList(chNo, wayNo);
 				PutToNandWayPriorityTable(nandReqQ[chNo][wayNo].headReq, chNo, wayNo);
 				wayNo = nextWay;
 			}
-			else
+			else  //经过ReleaseBlockedByRow，这个way仍然没有nandReq 说明被阻塞了
 			{
 				wayNo = dieStateTablePtr->dieState[chNo][wayNo].nextWay;
 				
-				waitWayCnt++;
+				waitWayCnt++;       //对于每个WAY_REQ  FIFO
 			}
 		}
 	}
@@ -180,7 +181,7 @@ void SchedulingNandReqPerCh(unsigned int chNo)
 		{
 			if(V2FWayReady(readyBusy, wayNo))
 			{
-				reqStatus = CheckReqStatus(chNo, wayNo);
+				reqStatus = CheckReqStatus(chNo, wayNo);//从check队列中找一个req
 
 				if(reqStatus != REQ_STATUS_RUNNING)
 				{
@@ -246,7 +247,7 @@ void SchedulingNandReqPerCh(unsigned int chNo)
 					wayNo = dieStateTablePtr->dieState[chNo][wayNo].nextWay;
 				}
 			}
-			if(wayPriorityTablePtr->wayPriority[chNo].readTriggerHead != WAY_NONE)
+			if(wayPriorityTablePtr->wayPriority[chNo].readTriggerHead != WAY_NONE) //read
 			{
 				wayNo = wayPriorityTablePtr->wayPriority[chNo].readTriggerHead;
 
@@ -264,7 +265,7 @@ void SchedulingNandReqPerCh(unsigned int chNo)
 				}
 			}
 
-			if(wayPriorityTablePtr->wayPriority[chNo].eraseHead != WAY_NONE)
+			if(wayPriorityTablePtr->wayPriority[chNo].eraseHead != WAY_NONE) //erase
 			{
 				wayNo = wayPriorityTablePtr->wayPriority[chNo].eraseHead;
 
@@ -282,7 +283,7 @@ void SchedulingNandReqPerCh(unsigned int chNo)
 					wayNo = dieStateTablePtr->dieState[chNo][wayNo].nextWay;
 				}
 			}
-			if(wayPriorityTablePtr->wayPriority[chNo].writeHead != WAY_NONE)
+			if(wayPriorityTablePtr->wayPriority[chNo].writeHead != WAY_NONE)  //write
 			{
 				wayNo = wayPriorityTablePtr->wayPriority[chNo].writeHead;
 
@@ -639,7 +640,7 @@ void SelectiveGetFromNandStatusCheckList(unsigned int chNo, unsigned int wayNo)
 
 }
 
-void IssueNandReq(unsigned int chNo, unsigned int wayNo)
+void IssueNandReq(unsigned int chNo, unsigned int wayNo) //将请求的信息写入某个寄存器
 {
 	unsigned int reqSlotTag, rowAddr;
 	void* dataBufAddr;
@@ -821,6 +822,7 @@ unsigned int CheckReqStatus(unsigned int chNo, unsigned int wayNo)
 			return REQ_STATUS_DONE;
 		}
 	}
+	//read erase write
 	else if(dieStateTablePtr->dieState[chNo][wayNo].reqStatusCheckOpt == REQ_STATUS_CHECK_OPT_CHECK)
 	{
 		statusReportPtr = (unsigned int*)(&statusReportTablePtr->statusReport[chNo][wayNo]);
@@ -829,16 +831,17 @@ unsigned int CheckReqStatus(unsigned int chNo, unsigned int wayNo)
 
 		dieStateTablePtr->dieState[chNo][wayNo].reqStatusCheckOpt = REQ_STATUS_CHECK_OPT_REPORT;
 	}
+	//
 	else if(dieStateTablePtr->dieState[chNo][wayNo].reqStatusCheckOpt == REQ_STATUS_CHECK_OPT_REPORT)
 	{
-		statusReport = statusReportTablePtr->statusReport[chNo][wayNo];
+		statusReport = statusReportTablePtr->statusReport[chNo][wayNo];  //？？？
 
 		if(V2FRequestReportDone(statusReport))
 		{
 			status = V2FEliminateReportDoneFlag(statusReport);
 			if(V2FRequestComplete(status))
 			{
-				if (V2FRequestFail(status))
+				if (V2FRequestFail(status))    //坏块
 					return REQ_STATUS_FAIL;
 
 				dieStateTablePtr->dieState[chNo][wayNo].reqStatusCheckOpt = REQ_STATUS_CHECK_OPT_NONE;
@@ -904,13 +907,13 @@ void ExecuteNandReq(unsigned int chNo, unsigned int wayNo, unsigned int reqStatu
 					reqPoolPtr->reqPool[reqSlotTag].reqCode = REQ_CODE_READ_TRANSFER;
 				else
 				{
-					retryLimitTablePtr->retryLimit[chNo][wayNo] = RETRY_LIMIT;
-					GetFromNandReqQ(chNo, wayNo, reqStatus, reqPoolPtr->reqPool[reqSlotTag].reqCode);
+					retryLimitTablePtr->retryLimit[chNo][wayNo] = RETRY_LIMIT;//重新执行的上限，重新retry_limit还不能执行则为坏块
+					GetFromNandReqQ(chNo, wayNo, reqStatus, reqPoolPtr->reqPool[reqSlotTag].reqCode);//删除指令?
 				}
 
 				dieStateTablePtr->dieState[chNo][wayNo].dieState = DIE_STATE_IDLE;
 			}
-			else if(reqStatus == REQ_STATUS_FAIL)
+			else if(reqStatus == REQ_STATUS_FAIL)   //直接定义为坏块
 			{
 				if((reqPoolPtr->reqPool[reqSlotTag].reqCode == REQ_CODE_READ) || (reqPoolPtr->reqPool[reqSlotTag].reqCode == REQ_CODE_READ_TRANSFER))
 					if(retryLimitTablePtr->retryLimit[chNo][wayNo] > 0)
@@ -952,9 +955,9 @@ void ExecuteNandReq(unsigned int chNo, unsigned int wayNo, unsigned int reqStatu
 				GetFromNandReqQ(chNo, wayNo, reqStatus, reqPoolPtr->reqPool[reqSlotTag].reqCode);
 				dieStateTablePtr->dieState[chNo][wayNo].dieState = DIE_STATE_IDLE;
 			}
-			else if(reqStatus == REQ_STATUS_WARNING)
+			else if(reqStatus == REQ_STATUS_WARNING)  //超出ECC纠错能力
 			{
-				rowAddr = GenerateNandRowAddr(reqSlotTag);
+				rowAddr = GenerateNandRowAddr(reqSlotTag);  //返回ROW地址(PAGE ADDR)
 				xil_printf("ECC Uncorrectable Soon on ch %x way %x rowAddr %x / completion %x statusReport %x \r\n", chNo, wayNo, rowAddr, completeFlagTablePtr->completeFlag[chNo][wayNo],statusReportTablePtr->statusReport[chNo][wayNo]);
 
 				//grown bad block information update

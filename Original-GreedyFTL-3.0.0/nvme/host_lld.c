@@ -220,7 +220,7 @@ unsigned int get_nvme_cmd(unsigned short *qID, unsigned short *cmdSlotTag, unsig
 	NVME_CMD_FIFO_REG nvmeReg;
 	
 	nvmeReg.dword = IO_READ32(NVME_CMD_FIFO_REG_ADDR);
-
+	//先进先出读入一个命令
 	if(nvmeReg.cmdValid == 1)
 	{
 		unsigned int addr;
@@ -230,7 +230,9 @@ unsigned int get_nvme_cmd(unsigned short *qID, unsigned short *cmdSlotTag, unsig
 		*cmdSeqNum = nvmeReg.cmdSeqNum;
 
 		addr = NVME_CMD_SRAM_ADDR + (nvmeReg.cmdSlotTag * 64);
-		for(idx = 0; idx < 16; idx++)
+		//cmdSlotTag标记命令位置偏移
+		//addr为命令真实位置
+		for(idx = 0; idx < 16; idx++)       //读取Dword   共16个unsigned_int
 			*(cmdDword + idx) = IO_READ32(addr + (idx * 4));
 	}
 

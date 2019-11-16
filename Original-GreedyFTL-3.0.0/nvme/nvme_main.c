@@ -83,15 +83,15 @@ void nvme_main()
 
 	while(1)
 	{
-		exeLlr = 1;
+		exeLlr = 1;        //确定进行了ADMIN还是IO操作
 
-		if(g_nvmeTask.status == NVME_TASK_WAIT_CC_EN)
+		if(g_nvmeTask.status == NVME_TASK_WAIT_CC_EN) //cc？？？
 		{
 			unsigned int ccEn;
 			ccEn = check_nvme_cc_en();
 			if(ccEn == 1)
 			{
-				set_nvme_admin_queue(1, 1, 1);
+				set_nvme_admin_queue(1, 1, 1); //提交队列有效、创建队列有效、？
 				set_nvme_csts_rdy(1);
 				g_nvmeTask.status = NVME_TASK_RUNNING;
 				xil_printf("\r\nNVMe ready!!!\r\n");
@@ -100,21 +100,24 @@ void nvme_main()
 		else if(g_nvmeTask.status == NVME_TASK_RUNNING)
 		{
 			NVME_COMMAND nvmeCmd;
-			unsigned int cmdValid;
-
+			unsigned int cmdValid;        //cmd是否有效
+															//标记指令位置                   指令序号                        指令内容
 			cmdValid = get_nvme_cmd(&nvmeCmd.qID, &nvmeCmd.cmdSlotTag, &nvmeCmd.cmdSeqNum, nvmeCmd.cmdDword);
+
+			//将读取的命令保存在nvmeCmd中，cmdValid为命令是否有效
+			//qID为0表示admin命令 1 为IO
 
 			if(cmdValid == 1)
 			{
-				if(nvmeCmd.qID == 0)
+				if(nvmeCmd.qID == 0)             //处理admin命令   控制SSD
 				{
 					handle_nvme_admin_cmd(&nvmeCmd);
 				}
-				else
+				else                             //处理I/O 命令     传输数据
 				{
-					handle_nvme_io_cmd(&nvmeCmd);
-					ReqTransSliceToLowLevel();
-					exeLlr=0;
+					handle_nvme_io_cmd(&nvmeCmd);   //处理IO命令
+					ReqTransSliceToLowLevel();      //处理各个请求
+					exeLlr=0;            //IO
 				}
 			}
 		}
@@ -138,7 +141,7 @@ void nvme_main()
 				set_nvme_csts_shst(2);
 				g_nvmeTask.status = NVME_TASK_WAIT_RESET;
 
-				//flush grown bad block info
+				//flush grown bad block info 刷新增长的坏块信息
 				UpdateBadBlockTableForGrownBadBlock(RESERVED_DATA_BUFFER_BASE_ADDR);
 
 				xil_printf("\r\nNVMe shutdown!!!\r\n");

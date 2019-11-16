@@ -91,16 +91,19 @@ void handle_nvme_io_write(unsigned int cmdSlotTag, NVME_IO_COMMAND *nvmeIOCmd)
 	IO_READ_COMMAND_DW12 writeInfo12;
 	//IO_READ_COMMAND_DW13 writeInfo13;
 	//IO_READ_COMMAND_DW15 writeInfo15;
-	unsigned int startLba[2];
-	unsigned int nlb;
+	unsigned int startLba[2];     //逻辑块开始的地址
+	unsigned int nlb;             //逻辑块数量
 
-	writeInfo12.dword = nvmeIOCmd->dword[12];
+	writeInfo12.dword = nvmeIOCmd->dword[12];        //读取dword12???? not dword[12]
+
+
 	//writeInfo13.dword = nvmeIOCmd->dword[13];
 	//writeInfo15.dword = nvmeIOCmd->dword[15];
 
 	//if(writeInfo12.FUA == 1)
 	//	xil_printf("write FUA\r\n");
 
+	//dword10 和 dword11 一起作为第一个要写入的逻辑块的64位地址
 	startLba[0] = nvmeIOCmd->dword[10];
 	startLba[1] = nvmeIOCmd->dword[11];
 	nlb = writeInfo12.NLB;
@@ -109,6 +112,7 @@ void handle_nvme_io_write(unsigned int cmdSlotTag, NVME_IO_COMMAND *nvmeIOCmd)
 	//ASSERT(nlb < MAX_NUM_OF_NLB);
 	ASSERT((nvmeIOCmd->PRP1[0] & 0xF) == 0 && (nvmeIOCmd->PRP2[0] & 0xF) == 0);
 	ASSERT(nvmeIOCmd->PRP1[1] < 0x10 && nvmeIOCmd->PRP2[1] < 0x10);
+
 
 	ReqTransNvmeToSlice(cmdSlotTag, startLba[0], nlb, IO_NVM_WRITE);
 }
@@ -135,6 +139,7 @@ void handle_nvme_io_cmd(NVME_COMMAND *nvmeCmd)
 		case IO_NVM_WRITE:
 		{
 			//xil_printf("IO Write Command\r\n");
+			//将命令的位置和16个Dword传进handle_nvme_io_write
 			handle_nvme_io_write(nvmeCmd->cmdSlotTag, nvmeIOCmd);
 			break;
 		}

@@ -62,19 +62,19 @@ void InitReqPool()
 {
 	int chNo, wayNo, reqSlotTag;
 
-	reqPoolPtr = (P_REQ_POOL) REQ_POOL_ADDR; //revise address
+	reqPoolPtr = (P_REQ_POOL) REQ_POOL_ADDR; //修改地址
 
 	freeReqQ.headReq = 0;
 	freeReqQ.tailReq = AVAILABLE_OUNTSTANDING_REQ_COUNT - 1;
-
+	//slice粒度，包含四个页
 	sliceReqQ.headReq = REQ_SLOT_TAG_NONE;
 	sliceReqQ.tailReq = REQ_SLOT_TAG_NONE;
 	sliceReqQ.reqCnt = 0;
-
+	//缓冲区依赖项请求队列阻塞
 	blockedByBufDepReqQ.headReq = REQ_SLOT_TAG_NONE;
 	blockedByBufDepReqQ.tailReq = REQ_SLOT_TAG_NONE;
 	blockedByBufDepReqQ.reqCnt = 0;
-
+	//nvme直接内存读取
 	nvmeDmaReqQ.headReq = REQ_SLOT_TAG_NONE;
 	nvmeDmaReqQ.tailReq = REQ_SLOT_TAG_NONE;
 	nvmeDmaReqQ.reqCnt = 0;
@@ -82,7 +82,8 @@ void InitReqPool()
 	for(chNo = 0; chNo<USER_CHANNELS; chNo++)
 		for(wayNo = 0; wayNo<USER_WAYS; wayNo++)
 		{
-			blockedByRowAddrDepReqQ[chNo][wayNo].headReq = REQ_SLOT_TAG_NONE;
+			//按行地址依赖项请求队列阻塞
+			blockedByRowAddrDepReqQ[chNo][wayNo].headReq = REQ_SLOT_TAG_NONE;//请求槽标志
 			blockedByRowAddrDepReqQ[chNo][wayNo].tailReq = REQ_SLOT_TAG_NONE;
 			blockedByRowAddrDepReqQ[chNo][wayNo].reqCnt = 0;
 
@@ -90,7 +91,7 @@ void InitReqPool()
 			nandReqQ[chNo][wayNo].tailReq = REQ_SLOT_TAG_NONE;
 			nandReqQ[chNo][wayNo].reqCnt = 0;
 		}
-
+									//channel*way*128  可用请求数
 	for(reqSlotTag = 0; reqSlotTag < AVAILABLE_OUNTSTANDING_REQ_COUNT; reqSlotTag++)
 	{
 		reqPoolPtr->reqPool[reqSlotTag].reqQueueType =  REQ_QUEUE_TYPE_FREE;
@@ -100,14 +101,13 @@ void InitReqPool()
 		reqPoolPtr->reqPool[reqSlotTag].nextReq = reqSlotTag + 1;
 	}
 
-	reqPoolPtr->reqPool[0].prevReq = REQ_SLOT_TAG_NONE;
+	reqPoolPtr->reqPool[0].prevReq = REQ_SLOT_TAG_NONE; //
 	reqPoolPtr->reqPool[AVAILABLE_OUNTSTANDING_REQ_COUNT - 1].nextReq = REQ_SLOT_TAG_NONE;
 	freeReqQ.reqCnt = AVAILABLE_OUNTSTANDING_REQ_COUNT;
 
 	notCompletedNandReqCnt = 0;
 	blockedReqCnt = 0;
 }
-
 
 void PutToFreeReqQ(unsigned int reqSlotTag)
 {
@@ -161,14 +161,17 @@ unsigned int GetFromFreeReqQ()
 
 void PutToSliceReqQ(unsigned int reqSlotTag)
 {
-	if(sliceReqQ.tailReq != REQ_SLOT_TAG_NONE)
+	//SliceReqQ和reqPool的关系？？？？
+	//SliceReqQ并不是一个真的队列 ，它只描述队列的特征：head,tail,reqCnt
+	//队列由reqPool中每一项的prevReq和nextReq来实现
+	if(sliceReqQ.tailReq != REQ_SLOT_TAG_NONE)     //队列尾部插入
 	{
 		reqPoolPtr->reqPool[reqSlotTag].prevReq = sliceReqQ.tailReq;
 		reqPoolPtr->reqPool[reqSlotTag].nextReq = REQ_SLOT_TAG_NONE;
 		reqPoolPtr->reqPool[sliceReqQ.tailReq].nextReq = reqSlotTag;
-		sliceReqQ.tailReq = reqSlotTag;
+		sliceReqQ.tailReq = reqSlotTag;              //插入SliceReqQ
 	}
-	else
+	else                //SliceReqQ满了？  刷新了SliceReqQ
 	{
 		reqPoolPtr->reqPool[reqSlotTag].prevReq = REQ_SLOT_TAG_NONE;
 		reqPoolPtr->reqPool[reqSlotTag].nextReq = REQ_SLOT_TAG_NONE;
@@ -177,7 +180,7 @@ void PutToSliceReqQ(unsigned int reqSlotTag)
 	}
 
 	reqPoolPtr->reqPool[reqSlotTag].reqQueueType =  REQ_QUEUE_TYPE_SLICE;
-	sliceReqQ.reqCnt++;
+	sliceReqQ.reqCnt++;          //Slice队列的请求数目+1S
 }
 
 unsigned int GetFromSliceReqQ()
